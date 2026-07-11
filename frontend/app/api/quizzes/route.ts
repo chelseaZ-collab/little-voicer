@@ -1,15 +1,12 @@
-// app/api/vocabulary/route.ts
+// app/api/quizzes/route.ts
 import { NextResponse } from 'next/server'
 
 const AIRTABLE_BASE_ID = process.env.AIRTABLE_BASE_ID || ''
 const AIRTABLE_API_KEY = process.env.AIRTABLE_API_KEY || ''
 
 /**
- * GET /api/vocabulary
- * 根据 Video ID 获取对应的词汇卡片
- *
- * 查询参数:
- *   - videoId: 视频 ID (如 LV-001)
+ * GET /api/quizzes?videoId=LV-001
+ * 根据 Video ID 获取对应的互动测验
  */
 export async function GET(request: Request) {
   try {
@@ -23,11 +20,10 @@ export async function GET(request: Request) {
       )
     }
 
-    // Airtable 查询: 找到 Relation 字段指向指定视频的词汇卡
     const filterByFormula = `FIND("${videoId}", {Video})`
 
     const response = await fetch(
-      `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/Vocabulary?filterByFormula=${encodeURIComponent(filterByFormula)}`,
+      `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/Quizzes?filterByFormula=${encodeURIComponent(filterByFormula)}`,
       {
         headers: {
           Authorization: `Bearer ${AIRTABLE_API_KEY}`,
@@ -39,26 +35,29 @@ export async function GET(request: Request) {
 
     if (!response.ok) {
       return NextResponse.json(
-        { error: 'Failed to fetch vocabulary' },
+        { error: 'Failed to fetch quizzes' },
         { status: response.status }
       )
     }
 
     const data = await response.json()
 
-    const cards = (data.records as any[]).map((record) => ({
-      cardId: record.fields['Card ID'],
-      word: record.fields.Word,
-      phonetic: record.fields.Phonetic || '',
-      meaningCn: record.fields['Meaning CN'] || '',
-      exampleEn: record.fields['Example Sentence EN'] || '',
-      exampleCn: record.fields['Example Sentence CN'] || '',
-    }))
+    const quizzes = (data.records as any[])
+      .map((record) => ({
+        quizId: record.fields['Quiz ID'],
+        question: record.fields.Question,
+        type: record.fields.Type,
+        options: record.fields.Options || [],
+        correctAnswer: record.fields['Correct Answer'] || '',
+        explanation: record.fields.Explanation || '',
+        order: record.fields.Order || 0,
+      }))
+      .sort((a, b) => a.order - b.order)
 
     return NextResponse.json({
       success: true,
-      count: cards.length,
-      data: cards,
+      count: quizzes.length,
+      data: quizzes,
     })
   } catch (error) {
     console.error('API error:', error)

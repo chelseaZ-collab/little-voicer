@@ -1,14 +1,12 @@
 // app/api/videos/route.ts
 import { NextResponse } from 'next/server'
 
-// Airtable API 配置
 const AIRTABLE_BASE_ID = process.env.AIRTABLE_BASE_ID || ''
 const AIRTABLE_API_KEY = process.env.AIRTABLE_API_KEY || ''
 const AIRTABLE_TABLE = 'Videos'
 
 const AIRTABLE_URL = `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${AIRTABLE_TABLE}`
 
-// 类型定义
 export interface VideoRecord {
   id: string
   fields: {
@@ -34,8 +32,8 @@ export interface VideoRecord {
  *
  * 查询参数:
  *   - level: 按级别过滤 (L1, L2, L2+, L3)
- *   - theme: 按主题过滤 (自然科学, 动物世界, 故事绘本...)
- *   - status: 按状态过滤 (已上线, 待审核, 已下线)
+ *   - theme: 按主题过滤
+ *   - status: 按状态过滤
  *   - search: 搜索标题 (EN 或 CN)
  */
 export async function GET(request: Request) {
@@ -47,11 +45,7 @@ export async function GET(request: Request) {
     const search = searchParams.get('search')
 
     // 构建 Airtable 过滤条件
-    let filterByFormula = 'AND(\n'
-    const conditions: string[] = []
-
-    // 默认只显示"已上线"的视频
-    conditions.push(`{Status} = "已上线"`)
+    const conditions: string[] = ['{Status} = "已上线"']
 
     if (level) {
       conditions.push(`{Level} = "${level}"`)
@@ -63,27 +57,24 @@ export async function GET(request: Request) {
       conditions.push(`{Status} = "${status}"`)
     }
     if (search) {
-      // 搜索 Title EN 或 Title CN
       conditions.push(
-        `OR(\n  FIND("${search}", {Title EN}),\n  FIND("${search}", {Title CN})\n)`
+        `OR(FIND("${search}", {Title EN}), FIND("${search}", {Title CN}))`
       )
     }
 
-    if (conditions.length > 0) {
-      filterByFormula += conditions.join('\n  AND(\n  ') + '\n)'
-    } else {
-      filterByFormula += 'TRUE()\n'
-    }
+    const filterByFormula = 'AND(' + conditions.join(', ') + ')'
 
     // 调用 Airtable API
-    const response = await fetch(AIRTABLE_URL, {
-      headers: {
-        Authorization: `Bearer ${AIRTABLE_API_KEY}`,
-        'Content-Type': 'application/json',
-      },
-      // 缓存 5 分钟，减少 API 调用
-      next: { revalidate: 300 },
-    })
+    const response = await fetch(
+      `${AIRTABLE_URL}?filterByFormula=${encodeURIComponent(filterByFormula)}`,
+      {
+        headers: {
+          Authorization: `Bearer ${AIRTABLE_API_KEY}`,
+          'Content-Type': 'application/json',
+        },
+        next: { revalidate: 300 },
+      }
+    )
 
     if (!response.ok) {
       const error = await response.json()
@@ -119,62 +110,6 @@ export async function GET(request: Request) {
       success: true,
       count: videos.length,
       data: videos,
-    })
-  } catch (error) {
-    console.error('API error:', error)
-    return NextResponse.json(
-      { success: false, error: 'Internal server error' },
-      { status: 500 }
-    )
-  }
-}
-
-/**
- * GET /api/videos/:id
- * 获取单个视频的详细信息
- */
-export async function GET_BY_ID(
-  request: Request,
-  { params }: { params: Promise<{ id: string }> }
-) {
-  try {
-    const { id } = await params
-
-    const response = await fetch(
-      `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${AIRTABLE_TABLE}/${id}`,
-      {
-        headers: {
-          Authorization: `Bearer ${AIRTABLE_API_KEY}`,
-          'Content-Type': 'application/json',
-        },
-        next: { revalidate: 300 },
-      }
-    )
-
-    if (!response.ok) {
-      return NextResponse.json(
-        { error: 'Video not found' },
-        { status: 404 }
-      )
-    }
-
-    const data = await response.json()
-    const record = data as VideoRecord
-
-    return NextResponse.json({
-      success: true,
-      data: {
-        videoId: record.fields['Video ID'],
-        youtubeUrl: record.fields['YouTube URL'],
-        titleEn: record.fields['Title EN'],
-        titleCn: record.fields['Title CN'],
-        channel: record.fields.Channel,
-        duration: record.fields.Duration,
-        level: record.fields.Level,
-        theme: record.fields.Theme,
-        tags: record.fields.Tags || [],
-        notes: record.fields.Notes || '',
-      },
     })
   } catch (error) {
     console.error('API error:', error)
