@@ -20,56 +20,61 @@ export async function GET(request: Request) {
       )
     }
 
-    // 获取所有词汇卡
-    const response = await fetch(
-      `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/Vocabulary`,
-      {
-        headers: {
-          Authorization: `Bearer ${AIRTABLE_API_KEY}`,
-          'Content-Type': 'application/json',
-        },
-        next: { revalidate: 300 },
-      }
-    )
+    // 一次性获取所有词汇卡和视频记录
+    const [vocabResp, videosResp] = await Promise.all([
+      fetch(
+        `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/Vocabulary`,
+        {
+          headers: {
+            Authorization: `Bearer ${AIRTABLE_API_KEY}`,
+            'Content-Type': 'application/json',
+          },
+          next: { revalidate: 300 },
+        }
+      ),
+      fetch(
+        `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/Videos?filterByFormula={Status}="已上线"`,
+        {
+          headers: {
+            Authorization: `Bearer ${AIRTABLE_API_KEY}`,
+            'Content-Type': 'application/json',
+          },
+          next: { revalidate: 300 },
+        }
+      ),
+    ])
 
-    if (!response.ok) {
+    if (!vocabResp.ok || !videosResp.ok) {
       return NextResponse.json(
-        { error: 'Failed to fetch vocabulary' },
-        { status: response.status }
+        { error: 'Failed to fetch data' },
+        { status: vocabResp.status || videosResp.status }
       )
     }
 
-    const data = await response.json()
-    const allRecords = data.records as any[]
-
-    // 先获取所有视频的 videoId 到 recordId 的映射
-    const videosResp = await fetch(
-      `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/Videos?filterByFormula={Status}="已上线"`,
-      {
-        headers: {
-          Authorization: `Bearer ${AIRTABLE_API_KEY}`,
-          'Content-Type': 'application/json',
-        },
-        next: { revalidate: 300 },
-      }
-    )
+    const vocabData = await vocabResp.json()
     const videosData = await videosResp.json()
-    const videoMap: Record<string, any> = {}
+
+    // 建立 videoId -> recordId 映射
+    const videoMap: Record<string, string> = {}
     for (const rec of videosData.records) {
       const vid = rec.fields['Video ID']
       videoMap[String(vid)] = rec.id
-      videoMap[rec.id] = rec.id // 也存 recordId -> recordId
     }
 
-    // 找出匹配的 videoId 对应的 recordId
-    const targetRecordId = videoMap[videoId] || videoMap[String(videoId)]
+    const targetRecordId = videoMap[videoId]
+    if (!targetRecordId) {
+      return NextResponse.json({
+        success: true,
+        count: 0,
+        data: [],
+      })
+    }
 
     // 过滤出匹配该视频的词汇卡
-    const cards = allRecords
+    const cards = (vocabData.records as any[])
       .filter((record) => {
         const videoRel = record.fields['Video']
-        if (!videoRel) return false
-        // Video 字段是一个数组，包含 recordId
+        if (!Array.isArray(videoRel)) return false
         return videoRel.includes(targetRecordId)
       })
       .map((record) => ({
