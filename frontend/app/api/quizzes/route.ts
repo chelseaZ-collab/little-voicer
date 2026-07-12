@@ -5,7 +5,7 @@ const AIRTABLE_BASE_ID = process.env.AIRTABLE_BASE_ID || ''
 const AIRTABLE_API_KEY = process.env.AIRTABLE_API_KEY || ''
 
 /**
- * GET /api/quizzes?videoId=LV-001
+ * GET /api/quizzes?videoId=1
  * 根据 Video ID 获取对应的互动测验
  */
 export async function GET(request: Request) {
@@ -20,10 +20,9 @@ export async function GET(request: Request) {
       )
     }
 
-    const filterByFormula = `FIND("${videoId}", {Video})`
-
+    // 获取所有测验
     const response = await fetch(
-      `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/Quizzes?filterByFormula=${encodeURIComponent(filterByFormula)}`,
+      `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/Quizzes`,
       {
         headers: {
           Authorization: `Bearer ${AIRTABLE_API_KEY}`,
@@ -41,8 +40,37 @@ export async function GET(request: Request) {
     }
 
     const data = await response.json()
+    const allRecords = data.records as any[]
 
-    const quizzes = (data.records as any[])
+    // 先获取所有视频的 videoId 到 recordId 的映射
+    const videosResp = await fetch(
+      `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/Videos?filterByFormula={Status}="已上线"`,
+      {
+        headers: {
+          Authorization: `Bearer ${AIRTABLE_API_KEY}`,
+          'Content-Type': 'application/json',
+        },
+        next: { revalidate: 300 },
+      }
+    )
+    const videosData = await videosResp.json()
+    const videoMap: Record<string, any> = {}
+    for (const rec of videosData.records) {
+      const vid = rec.fields['Video ID']
+      videoMap[String(vid)] = rec.id
+      videoMap[rec.id] = rec.id
+    }
+
+    // 找出匹配的 videoId 对应的 recordId
+    const targetRecordId = videoMap[videoId] || videoMap[String(videoId)]
+
+    // 过滤出匹配该视频的测验
+    const quizzes = allRecords
+      .filter((record) => {
+        const videoRel = record.fields['Video']
+        if (!videoRel) return false
+        return videoRel.includes(targetRecordId)
+      })
       .map((record) => ({
         quizId: record.fields['Quiz ID'],
         question: record.fields.Question,

@@ -5,7 +5,7 @@ const AIRTABLE_BASE_ID = process.env.AIRTABLE_BASE_ID || ''
 const AIRTABLE_API_KEY = process.env.AIRTABLE_API_KEY || ''
 
 /**
- * GET /api/interpreting-tasks?videoId=LV-001
+ * GET /api/interpreting-tasks?videoId=1
  * 根据 Video ID 获取对应的口译练习任务
  */
 export async function GET(request: Request) {
@@ -20,10 +20,9 @@ export async function GET(request: Request) {
       )
     }
 
-    const filterByFormula = `FIND("${videoId}", {Video})`
-
+    // 获取所有口译任务
     const response = await fetch(
-      `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/Interpreting%20Tasks?filterByFormula=${encodeURIComponent(filterByFormula)}`,
+      `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/Interpreting%20Tasks`,
       {
         headers: {
           Authorization: `Bearer ${AIRTABLE_API_KEY}`,
@@ -41,15 +40,45 @@ export async function GET(request: Request) {
     }
 
     const data = await response.json()
+    const allRecords = data.records as any[]
 
-    const tasks = (data.records as any[]).map((record) => ({
-      taskId: record.fields['Task ID'],
-      sourceTextEn: record.fields['Source Text EN'] || '',
-      targetTextCn: record.fields['Target Text CN'] || '',
-      difficulty: record.fields.Difficulty,
-      scenario: record.fields.Scenario || '',
-      timeLimit: record.fields['Time Limit'] || 0,
-    }))
+    // 先获取所有视频的 videoId 到 recordId 的映射
+    const videosResp = await fetch(
+      `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/Videos?filterByFormula={Status}="已上线"`,
+      {
+        headers: {
+          Authorization: `Bearer ${AIRTABLE_API_KEY}`,
+          'Content-Type': 'application/json',
+        },
+        next: { revalidate: 300 },
+      }
+    )
+    const videosData = await videosResp.json()
+    const videoMap: Record<string, any> = {}
+    for (const rec of videosData.records) {
+      const vid = rec.fields['Video ID']
+      videoMap[String(vid)] = rec.id
+      videoMap[rec.id] = rec.id
+    }
+
+    // 找出匹配的 videoId 对应的 recordId
+    const targetRecordId = videoMap[videoId] || videoMap[String(videoId)]
+
+    // 过滤出匹配该视频的口译任务
+    const tasks = allRecords
+      .filter((record) => {
+        const videoRel = record.fields['Video']
+        if (!videoRel) return false
+        return videoRel.includes(targetRecordId)
+      })
+      .map((record) => ({
+        taskId: record.fields['Task ID'],
+        sourceTextEn: record.fields['Source Text EN'] || '',
+        targetTextCn: record.fields['Target Text CN'] || '',
+        difficulty: record.fields.Difficulty,
+        scenario: record.fields.Scenario || '',
+        timeLimit: record.fields['Time Limit'] || 0,
+      }))
 
     return NextResponse.json({
       success: true,
